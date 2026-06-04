@@ -14,10 +14,183 @@ execute:
 
 ## Setup
 
+Load libraries and pre-processed GTM data.
+
 ```{r}
 library(here)
 library(mgcv)
 library(tidyverse)
 
 load(file = here('data', 'gtmdat.RData'))
+```
+
+These plots just show chlorophyll to get a sense of the data and some of the associations.
+
+```{r}
+ggplot(gtmdat, aes(x = sample_date, y = value, color = filter_method)) +
+  geom_line(aes(linetype = lab)) +
+  scale_y_log10() + 
+  facet_wrap(~ STN_NAME) +
+  theme_minimal() + 
+  theme(legend.position = "bottom") +
+  labs(title = "Chlorophyll-a Concentration Over Time by Station",
+       x = NULL,
+       y = "Chl-a (µg/L)",
+       color = "Filter Method",
+       linetype = "Lab")
+```
+
+```{r}
+ggplot(gtmdat, aes(x = hours_since_low, y = value)) + 
+    geom_point() + 
+    geom_smooth(method = 'lm', formula = y ~ x) +
+    facet_wrap(~ STN_NAME) +
+    scale_y_log10() +
+    theme_minimal() +
+    labs(title = "Chlorophyll-a vs. Tidal Stage",
+            x = "Hours Since Low",
+            y = "Chl-a (µg/L)")
+```
+
+## Model 
+
+Use model 6 and gtmfmnut for the examples.  We'll stick with the k values from Murphy et al.
+
+```{r}
+sta <- 'gtmfmnut'
+
+dat <- gtmdat |> 
+  filter(STN_NAME == sta) |> 
+  filter(!is.na(value))
+
+k_val <- round((2/3) * (max(dat$cont_year) - min(dat$cont_year)))
+k_val <- max(k_val, 3)
+  
+m6 <- gam(value ~ s(cont_year, by = filter_method, k = k_val) +
+          s(hours_since_low, bs = "cc", k = 4) +
+          lab +
+          filter_method,
+      data = dat,
+      family = Gamma(link = "log"),
+      method = "REML")
+```
+
+Quick summary of the model (note low R-squared and deviance explained).
+
+```{r}
+summary(m6)
+```
+
+Run some model diagnostics.
+
+```{r}
+gam.check(m6)
+```
+
+I use this function to compare `k'` to `edf`.  If the values are similar, it often means that the knots are not high enough.  In this case though, the `k-index` is very low, suggesting some kind of systematic underfitting. 
+
+Looking at a plot of the predictions vs observed confirms this to be the case.
+
+```{r}
+dat <- dat |> 
+  mutate(prd = predict(m6, type = "response"))
+
+ggplot(dat, aes(x = sample_date, y = value, color = filter_method)) +
+  geom_point() +
+  geom_line(aes(y = prd)) +
+  scale_y_log10() +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom"
+  ) +
+  labs(title = paste("GAM Fit for", sta),
+       x = NULL,
+       y = "Chl-a (µg/L)",
+       color = "Filter Method")
+```
+
+Some of your slides show that you looked at this, but I want to make the point that the Murphy method of choosing k is too conservative for this data.  Here I'm using the method from our 2022 paper, downscaling the "month" multiplier just a bit to account to accommodate the degrees of freedom.  In practice, small changes in this number shouldn't matter much. Note that the model does take several minutes to fit. 
+
+```{r}
+k_val <- 10 * length(unique(dat$yr))
+m6b <- gam(value ~ s(cont_year, by = filter_method, k = k_val) +
+          s(hours_since_low, bs = "cc", k = 4) +
+          lab +
+          filter_method,
+      data = dat,
+      family = Gamma(link = "log"),
+      method = "REML")
+```
+
+There's about a three-fold increase in the R-squared and explained deviance.
+
+```{r}
+summary(m6b)
+```
+
+The model fit to the data looks much better.
+
+```{r}
+dat <- dat |> 
+  mutate(prdb = predict(m6b, type = "response"))
+
+ggplot(dat, aes(x = sample_date, y = value, color = filter_method)) +
+  geom_point() +
+  geom_line(aes(y = prdb)) +
+  scale_y_log10() +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom"
+  ) +
+  labs(title = paste("GAM Fit for", sta),
+       x = NULL,
+       y = "Chl-a (µg/L)",
+       color = "Filter Method")
+```
+
+The problem with the `by` argument though is that it only fits a separate smooth for the period of time when the filter method was used.  We cannot make any statements about the effect of filter method overall because the effect is specific to only one period of time when that method was used.  
+
+Looking at your model 1, this might be the better approach, but include a higher value for k in the cont_year smoother.  The challenge of understanding the filter effects is that they are independent across time, so using a smoother that combines both time and filter could produce a well-fitted model, but you cannot easily evaluate the effects of just the smoothers.  Although m6b includes a fixed effect of the filters, their signal is completely consumed in the `s()` smoother with time. Model 1 retains an effect of the filters that can be disambiguated from time. 
+
+```{r}
+k_val <- 10 * length(unique(dat$yr))
+m6c <- gam(value ~ s(cont_year, k = k_val) +
+          s(hours_since_low, bs = "cc", k = 4) +
+          filter_method + 
+          lab,
+      data = dat,
+      family = Gamma(link = "log"),
+      method = "REML")
+```
+
+Also note that m6c has a good predictive fit to the data, similar to m6b, simply by just increasing the k values. 
+
+```{r}
+summary(m6c)
+```
+
+## Model slices
+
+Now we can get creative to look at the model predictions under different conditions. 
+
+```{r}
+
+toprd <- dat |> 
+    select(sample_date, cont_year, hours_since_low, lab) |> 
+    crossing(
+        filter_method = unique(dat$filter_method)
+    )
+
+prds <- predict(m6c, newdata = toprd, type = "response") 
+
+toplo <- bind_cols(toprd, prds = prds)
+
+ggplot(toplo, aes(x = sample_date, y = prds, group = filter_method,color = filter_method)) +
+    geom_line() +
+    scale_y_log10() +
+    theme_minimal() +
+    labs(title = paste("GAM Predictions for", sta),
+         x = "Continuous Year",
+         y = "Predicted Chl-a (µg/L)",
+         color = "Filter Method")
 ```

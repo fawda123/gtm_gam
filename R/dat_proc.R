@@ -24,6 +24,6 @@ GTM_data <- GTM_data |>
 
 gtmdat <- GTM_data |> 
   filter(param == "Chl-a Corrected") |> 
-  select(STN_NAME, sample_date, cont_year, value, filter_method, lab, hours_since_low)
+  select(STN_NAME, yr, sample_date, cont_year, value, filter_method, lab, hours_since_low)
 
 save(gtmdat, file = here::here('data', 'gtmdat.Rdata'))
