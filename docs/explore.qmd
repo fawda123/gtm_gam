@@ -55,7 +55,7 @@ ggplot(gtmdat, aes(x = hours_since_low, y = value)) +
 
 ## Model 
 
-Use model 6 and gtmfmnut for the examples.  We'll start with the k values from Murphy et al.
+Use model 6 and gtmfmnut for the examples. This station also seems to have the strongest association with tide. We'll start with the k values from Murphy et al.
 
 ```{r}
 sta <- 'gtmfmnut'
@@ -76,7 +76,7 @@ m6 <- gam(value ~ s(cont_year, by = filter_method, k = k_val) +
       method = "REML")
 ```
 
-Quick summary of the model (note low R-squared and deviance explained).
+Quick summary of the model - note the low R-squared and deviance explained.
 
 ```{r}
 summary(m6)
@@ -88,7 +88,7 @@ Run some model diagnostics.
 gam.check(m6)
 ```
 
-I use `gam.check()` to compare `k'` to `edf`.  If the values are similar, it often means that the knots are not high enough.  This part looks okay, but the `k-index` is very low, suggesting some kind of systematic underfitting. 
+I use `gam.check()` to compare `k'` to `edf`.  If the values are similar, it often means that the knots are not high enough.  That part looks okay, but the `k-index` is very low, suggesting some kind of systematic underfitting. 
 
 Looking at a plot of the predictions vs observed confirms this to be the case.
 
@@ -110,7 +110,7 @@ ggplot(dat, aes(x = sample_date, y = value, color = filter_method)) +
        color = "Filter Method")
 ```
 
-Some of your slides show that you looked at this, but I want to make the point that the Murphy method of choosing k is too conservative for this data.  They also use a smoother for day of year that captures seasonality and lower k values for `cont_year` likely work well in this case, but not when the former is omitted. 
+Some of your slides show that you looked at this, but I want to make the point that the Murphy method of choosing k is too conservative for this data.  Importantly, they also use a smoother for day of year that captures seasonality.  In that case, smaller k values for `cont_year` are fine since it doesn't need to describe seasonality.  This will not work for model 6.
 
 Here I'm using the method from our 2022 paper, downscaling the "month" multiplier just a bit to account for the available degrees of freedom.  In practice, small changes in this number shouldn't matter much, but there should be some justification for why the multiplier was chosen.  Our paper uses 12 given monthly sampling, which is probably overkill and can be too high when limited by degrees of freedom (as in this case). Note that the model does take several minutes to fit, so I'm saving it and then loading it later. 
 
@@ -206,8 +206,9 @@ ggplot(toplo, aes(x = sample_date, y = prds, group = filter_method,color = filte
     geom_line() +
     scale_y_log10() +
     theme_minimal() +
+    theme(legend.position = 'bottom') +
     labs(title = paste("GAM Predictions for", sta),
-         x = "Continuous Year",
+         x = NULL,
          y = "Predicted Chl-a (µg/L)",
          color = "Filter Method")
 ```
@@ -227,7 +228,7 @@ ggplot(toplo, aes(x = filter_method, y = .fitted, group = filter_method, color =
          color = "Filter Method")
 ```
 
-Now what's more interesting is how you might evaluate the effects of the tide.  You can again create a prediction matrix with the range of conditions you want to evaluate. Filter method and lab can also be held constant at one of the levels for each since these are less important (gratia has methods to get these prediction metrics, but I prefer this way).  However, as shown later, holding these factors at single values gets messy when you're evaluating confidence in the predictions, which are not conveyed in this plot. 
+Now what's more interesting is how you might evaluate the effects of the tide.  You can again create a prediction matrix with the range of conditions you want to evaluate. Filter method and lab can also be held constant at one of the levels for each since these are less important (gratia has methods to get these prediction matrices, but I prefer this way).  However, as shown later, holding these factors at single values gets messy when you're evaluating confidence in the predictions, which are not conveyed in this plot. 
 
 ```{r}
 toprd <- tibble(
@@ -249,6 +250,7 @@ ggplot(toplo, aes(x = cont_year, y = hours_since_low, fill = prds)) +
     scale_y_continuous(expand = c(0, 0)) +
     scale_fill_viridis_c() +
     theme_minimal() +
+    theme(legend.position = 'bottom') +
     labs(title = paste("GAM Predictions for", sta),
          x = NULL,
          y = "Hours Since Low",
@@ -256,13 +258,13 @@ ggplot(toplo, aes(x = cont_year, y = hours_since_low, fill = prds)) +
     )
 ```
 
-Actually, that plot is not that compelling, since the trends over time are much stronger than the tidal effects.  Instead, we can look at the predictions over time for different tidal stages.  This plot shows the marginal effects of each smoother and we can pull out times when the tide is at its lowest or highest to emphasize when these effects will be largest on chlorophyll, say 7 hours and 12 hours since low tide.
+Actually, that plot is not that compelling, since the trends over time are much stronger than the tidal effects.  Instead, we can look at the predictions over time for different tidal stages.  This plot shows the marginal/conditional effects of each smoother and we can pull out times when the tide is at its lowest or highest to emphasize when these effects will be largest on chlorophyll, say 7 hours and 12 hours since low tide.
 
 ```{r}
 draw(m1b)
 ```
 
-Here's the plot and I'm including the confidence intervals, which do overlap for these predictions because they do account for the uncertainty across all predictors, not just hours since low tide.  Time, filter method, and lab are also from the observed data for the prediction matrix to constrain the confidence intervals to reasonable values (e.g., filter method 1 - 0.3 um Field - used at the start of the time series has very large CI if extrapolated to later in the time series). 
+Here's the plot and I'm including the confidence intervals, which do overlap for these predictions because they account for the uncertainty across all predictors, not just hours since low tide.  Time, filter method, and lab are also from the observed data for the prediction matrix to constrain the confidence intervals to reasonable values (e.g., filter method 0.3 um Field used at the start of the time series has very large CI if extrapolated to later in the time series). 
 
 ```{r}
 dat_7  <- dat |> mutate(hours_since_low = 7)
@@ -302,13 +304,13 @@ ggplot(toplo, aes(x = cont_year, color = hours_since_low, fill = hours_since_low
   )
 ```
 
-In practice, you might just interpret the conditional effects plot above for hours since low tide, which shows the average effect of the tide on chlorophyll across the time series.  This is a more straightforward way to evaluate the tidal effects, though it does not capture how these effects might change over time.
+In practice, you might just interpret the conditional effects plot above (second to last plot) to understand how hours since low tide affect chlorophyll.  That plot shows the shows individual effect of the tide on chlorophyll across the time series.  This is a more straightforward way to evaluate the tidal effects, though it does not capture how these effects might change over time.
 
 ## Half-baked thoughts
 
 A couple things worth considering: 
 
 * To me, it's more important to first develop a model that describes chlorophyll well as a first cut, otherwise interpreting the individual effects of the smoothers is not that meaningful.  
-* The Murphy method of choosing k is too conservative for this data, so I would recommend using a higher value for k in the `cont_year` smoother.  This will allow you to capture the temporal trends in chlorophyll better and then you can evaluate the effects of the filters and tide more meaningfully. You probably don't need to set K as high as I did in these examples, but it's probably worth experimenting with progrssively higher values until you see the jump and plateau in the R-squared and deviance explained.
+* The Murphy method of choosing k is too conservative when you don't have a seasonal smoother, so I would recommend using a higher value for k in the `cont_year` smoother.  This will allow you to capture both the seasonal and inter-annual trends in chlorophyll better and then you can evaluate the effects of the filters and tide more meaningfully. You probably don't need to set K as high as I did in these examples, but it's probably worth experimenting with progrssively higher values until you see the jump and plateau in the R-squared and deviance explained.
 * The `by` argument is not ideal for evaluating the effects of the filters because it fits separate smooths for each filter method, which confounds the filter effects with time.  Instead, I would recommend including the filter method as a parametric term in the model and using a single smoother for time that includes all data.  This way, you can evaluate the effects of the filters more directly while still capturing the temporal trends in chlorophyll.
 * None of the content here speaks to model selection as you had in your powerpoint.  I still think this is a valuable component of your analysis and I would repeat it with the higher k values to see how the model selection changes.  
